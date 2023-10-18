@@ -7,10 +7,15 @@ import { UserRepository } from '@/databases/repositories';
 import { getInstanceBaseUrl } from '@/UserManagement/UserManagementHelper';
 import type { PublicUser } from '@/Interfaces';
 import type { PostHogClient } from '@/posthog';
+import { JwtService } from '@/services/jwt.service';
+import { BadRequestError } from '@/ResponseHelper';
 
 @Service()
 export class UserService {
-	constructor(private readonly userRepository: UserRepository) {}
+	constructor(
+		private readonly jwtService: JwtService,
+		private readonly userRepository: UserRepository,
+	) {}
 
 	async findOne(options: FindOneOptions<User>) {
 		return this.userRepository.findOne({ relations: ['globalRole'], ...options });
@@ -54,16 +59,47 @@ export class UserService {
 		return this.userRepository.update(userId, { settings: { ...settings, ...newSettings } });
 	}
 
-	generatePasswordResetUrl(instanceBaseUrl: string, token: string, mfaEnabled: boolean) {
-		const url = new URL(`${instanceBaseUrl}/change-password`);
-
+	generatePasswordResetUrl(user: User) {
+		const url = new URL(`${getInstanceBaseUrl()}/change-password`);
+		const token = this.jwtService.signData({ sub: user.id }, { expiresIn: '1d' });
 		url.searchParams.append('token', token);
-		url.searchParams.append('mfaEnabled', mfaEnabled.toString());
-
+		url.searchParams.append('mfaEnabled', user.mfaEnabled.toString());
 		return url.toString();
 	}
 
-	async toPublic(user: User, options?: { withInviteUrl?: boolean; posthog?: PostHogClient }) {
+	generateInvitationUrl(inviter: User, inviteeId: string) {
+		const url = new URL(`${getInstanceBaseUrl()}/signup`);
+		const token = this.jwtService.signData(
+			{ inviterId: inviter.id, inviteeId },
+			{ expiresIn: '7d' },
+		);
+		url.searchParams.append('token', token);
+		return url.toString();
+	}
+
+	async validateInvitationToken(token: string) {
+		const { inviterId, inviteeId } = this.jwtService.verifyToken<{
+			inviterId: string;
+			inviteeId: string;
+		}>(token);
+
+		const users = await this.findMany({
+			where: { id: In([inviterId, inviteeId]) },
+		});
+		if (users.length !== 2) {
+			throw new BadRequestError('Invalid invitation token');
+		}
+
+		const invitee = users.find((user) => user.id === inviteeId);
+		if (!invitee || invitee.password) {
+			throw new BadRequestError('The invitation was likely either deleted or already claimed');
+		}
+
+		const inviter = users.find((user) => user.id === inviterId);
+		return { invitee, inviter };
+	}
+
+	async toPublic(user: User, options?: { posthog?: PostHogClient }) {
 		const { password, updatedAt, apiKey, authIdentities, ...rest } = user;
 
 		const ldapIdentity = authIdentities?.find((i) => i.providerType === 'ldap');
@@ -74,26 +110,11 @@ export class UserService {
 			hasRecoveryCodesLeft: !!user.mfaRecoveryCodes?.length,
 		};
 
-		if (options?.withInviteUrl && publicUser.isPending) {
-			publicUser = this.addInviteUrl(publicUser, user.id);
-		}
-
 		if (options?.posthog) {
 			publicUser = await this.addFeatureFlags(publicUser, options.posthog);
 		}
 
 		return publicUser;
-	}
-
-	private addInviteUrl(user: PublicUser, inviterId: string) {
-		const url = new URL(getInstanceBaseUrl());
-		url.pathname = '/signup';
-		url.searchParams.set('inviterId', inviterId);
-		url.searchParams.set('inviteeId', user.id);
-
-		user.inviteAcceptUrl = url.toString();
-
-		return user;
 	}
 
 	private async addFeatureFlags(publicUser: PublicUser, posthog: PostHogClient) {

@@ -315,7 +315,6 @@ export class Server extends AbstractServer {
 				repositories.SharedWorkflow,
 				activeWorkflowRunner,
 				mailer,
-				jwtService,
 				Container.get(RoleService),
 				userService,
 				postHog,

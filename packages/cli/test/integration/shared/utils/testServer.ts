@@ -155,8 +155,9 @@ export const setupTestServer = ({
 		config.set('userManagement.jwtSecret', 'My JWT secret');
 		config.set('userManagement.isInstanceOwnerSetUp', true);
 
+		const license = Container.get(License);
 		if (enabledFeatures) {
-			Container.get(License).isFeatureEnabled = (feature) => enabledFeatures.includes(feature);
+			license.isFeatureEnabled = (feature) => enabledFeatures.includes(feature);
 		}
 
 		const enablePublicAPI = endpointGroups?.includes('publicApi');
@@ -198,6 +199,7 @@ export const setupTestServer = ({
 			const internalHooks = Container.get(InternalHooks);
 			const mailer = Container.get(UserManagementMailer);
 			const mfaService = Container.get(MfaService);
+			const jwtService = Container.get(JwtService);
 			const userService = Container.get(UserService);
 
 			for (const group of functionEndpoints) {
@@ -215,7 +217,7 @@ export const setupTestServer = ({
 					case 'mfa':
 						registerController(app, config, new MFAController(mfaService));
 					case 'ldap':
-						Container.get(License).isLdapEnabled = () => true;
+						license.isLdapEnabled = () => true;
 						await handleLdapInit();
 						const { service, sync } = LdapManager.getInstance();
 						registerController(app, config, new LdapController(service, sync, internalHooks));
@@ -245,7 +247,7 @@ export const setupTestServer = ({
 								internalHooks,
 								mailer,
 								userService,
-								Container.get(JwtService),
+								jwtService,
 								mfaService,
 							),
 						);
@@ -276,7 +278,6 @@ export const setupTestServer = ({
 								Container.get(SharedWorkflowRepository),
 								Container.get(ActiveWorkflowRunner),
 								mailer,
-								Container.get(JwtService),
 								Container.get(RoleService),
 								userService,
 							),

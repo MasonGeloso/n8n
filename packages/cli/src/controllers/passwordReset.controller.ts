@@ -115,20 +115,8 @@ export class PasswordResetController {
 		}
 
 		const baseUrl = getInstanceBaseUrl();
-		const { id, firstName, lastName } = user;
-
-		const resetPasswordToken = this.jwtService.signData(
-			{ sub: id },
-			{
-				expiresIn: '1d',
-			},
-		);
-
-		const url = this.userService.generatePasswordResetUrl(
-			baseUrl,
-			resetPasswordToken,
-			user.mfaEnabled,
-		);
+		const { firstName, lastName } = user;
+		const url = this.userService.generatePasswordResetUrl(user);
 
 		try {
 			await this.mailer.passwordReset({
@@ -151,7 +139,7 @@ export class PasswordResetController {
 
 		this.logger.info('Sent password reset email successfully', { userId: user.id, email });
 		void this.internalHooks.onUserTransactionalEmail({
-			user_id: id,
+			user_id: user.id,
 			message_type: 'Reset password',
 			public_api: false,
 		});

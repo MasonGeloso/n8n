@@ -59,12 +59,6 @@ const staticAssets = globSync(['**/*.html', '**/*.svg', '**/*.png', '**/*.ico'],
 	cwd: EDITOR_UI_DIST_DIR,
 });
 
-// TODO: delete this
-const isPostUsersId = (req: Request, restEndpoint: string): boolean =>
-	req.method === 'POST' &&
-	new RegExp(`/${restEndpoint}/users/[\\w\\d-]*`).test(req.url) &&
-	!req.url.includes('reinvite');
-
 const isAuthExcluded = (url: string, ignoredEndpoints: Readonly<string[]>): boolean =>
 	!!ignoredEndpoints
 		.filter(Boolean) // skip empty paths
@@ -89,7 +83,6 @@ export const setupAuthMiddlewares = (
 			canSkipAuth(req.method, req.path) ||
 			isAuthExcluded(req.url, ignoredEndpoints) ||
 			req.url.startsWith(`/${restEndpoint}/settings`) ||
-			isPostUsersId(req, restEndpoint) ||
 			req.url.startsWith(`/${restEndpoint}/oauth2-credential/callback`) ||
 			req.url.startsWith(`/${restEndpoint}/oauth1-credential/callback`)
 		) {

@@ -7,7 +7,6 @@ import { SharedCredentials } from '@db/entities/SharedCredentials';
 import { SharedWorkflow } from '@db/entities/SharedWorkflow';
 import { Authorized, NoAuthRequired, Delete, Get, Post, RestController, Patch } from '@/decorators';
 import {
-	generateUserInviteUrl,
 	getInstanceBaseUrl,
 	hashPassword,
 	validatePassword,
@@ -34,7 +33,6 @@ import { plainToInstance } from 'class-transformer';
 import { License } from '@/License';
 import { Container } from 'typedi';
 import { RESPONSE_ERROR_MESSAGES } from '@/constants';
-import { JwtService } from '@/services/jwt.service';
 import { RoleService } from '@/services/role.service';
 import { UserService } from '@/services/user.service';
 import { listQueryMiddleware } from '@/middlewares';
@@ -52,7 +50,6 @@ export class UsersController {
 		private readonly sharedWorkflowRepository: SharedWorkflowRepository,
 		private readonly activeWorkflowRunner: ActiveWorkflowRunner,
 		private readonly mailer: UserManagementMailer,
-		private readonly jwtService: JwtService,
 		private readonly roleService: RoleService,
 		private readonly userService: UserService,
 		private readonly postHog?: PostHogClient,
@@ -182,7 +179,9 @@ export class UsersController {
 					// This should never happen since those are removed from the list before reaching this point
 					throw new InternalServerError('User ID is missing for user with email address');
 				}
-				const inviteAcceptUrl = generateUserInviteUrl(req.user.id, id);
+
+				const inviteAcceptUrl = this.userService.generateInvitationUrl(req.user, id);
+
 				const resp: {
 					user: { id: string | null; email: string; inviteAcceptUrl?: string; emailSent: boolean };
 					error?: string;
@@ -225,7 +224,6 @@ export class UsersController {
 						});
 						this.logger.error('Failed to send email', {
 							userId: req.user.id,
-							inviteAcceptUrl,
 							domain: baseUrl,
 							email,
 						});
@@ -252,13 +250,10 @@ export class UsersController {
 	 * Fill out user shell with first name, last name, and password.
 	 */
 	@NoAuthRequired()
-	@Post('/:id')
-	async updateUser(req: UserRequest.Update, res: Response) {
-		const { id: inviteeId } = req.params;
-
-		const { inviterId, firstName, lastName, password } = req.body;
-
-		if (!inviterId || !inviteeId || !firstName || !lastName || !password) {
+	@Post('/signup')
+	async updateUser(req: UserRequest.FinishSignUp, res: Response) {
+		const { token, firstName, lastName, password } = req.body;
+		if (!token || !firstName || !lastName || !password) {
 			this.logger.debug(
 				'Request to fill out a user shell failed because of missing properties in payload',
 				{ payload: req.body },
@@ -266,40 +261,15 @@ export class UsersController {
 			throw new BadRequestError('Invalid payload');
 		}
 
+		const { invitee } = await this.userService.validateInvitationToken(token);
+
 		const validPassword = validatePassword(password);
-
-		const users = await this.userService.findMany({
-			where: { id: In([inviterId, inviteeId]) },
-			relations: ['globalRole'],
-		});
-
-		if (users.length !== 2) {
-			this.logger.debug(
-				'Request to fill out a user shell failed because the inviter ID and/or invitee ID were not found in database',
-				{
-					inviterId,
-					inviteeId,
-				},
-			);
-			throw new BadRequestError('Invalid payload or URL');
-		}
-
-		const invitee = users.find((user) => user.id === inviteeId) as User;
-
-		if (invitee.password) {
-			this.logger.debug(
-				'Request to fill out a user shell failed because the invite had already been accepted',
-				{ inviteeId },
-			);
-			throw new BadRequestError('This invite has been accepted already');
-		}
 
 		invitee.firstName = firstName;
 		invitee.lastName = lastName;
 		invitee.password = await hashPassword(validPassword);
 
 		const updatedUser = await this.userService.save(invitee);
-
 		await issueCookie(res, updatedUser);
 
 		void this.internalHooks.onUserSignup(updatedUser, {
@@ -393,7 +363,7 @@ export class UsersController {
 		const users = await this.userService.findMany(findManyOptions);
 
 		const publicUsers: Array<Partial<PublicUser>> = await Promise.all(
-			users.map(async (u) => this.userService.toPublic(u, { withInviteUrl: true })),
+			users.map(async (u) => this.userService.toPublic(u)),
 		);
 
 		return listQueryOptions
@@ -411,23 +381,8 @@ export class UsersController {
 			throw new NotFoundError('User not found');
 		}
 
-		const resetPasswordToken = this.jwtService.signData(
-			{ sub: user.id },
-			{
-				expiresIn: '1d',
-			},
-		);
-
-		const baseUrl = getInstanceBaseUrl();
-
-		const link = this.userService.generatePasswordResetUrl(
-			baseUrl,
-			resetPasswordToken,
-			user.mfaEnabled,
-		);
-		return {
-			link,
-		};
+		const link = this.userService.generatePasswordResetUrl(user);
+		return { link };
 	}
 
 	@Authorized(['global', 'owner'])
@@ -642,7 +597,7 @@ export class UsersController {
 		}
 
 		const baseUrl = getInstanceBaseUrl();
-		const inviteAcceptUrl = `${baseUrl}/signup?inviterId=${req.user.id}&inviteeId=${reinvitee.id}`;
+		const inviteAcceptUrl = this.userService.generateInvitationUrl(req.user, reinvitee.id);
 
 		try {
 			const result = await this.mailer.invite({

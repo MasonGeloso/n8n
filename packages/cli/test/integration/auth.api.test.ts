@@ -7,8 +7,9 @@ import * as Db from '@/Db';
 import { AUTH_COOKIE_NAME } from '@/constants';
 import type { Role } from '@db/entities/Role';
 import type { User } from '@db/entities/User';
+import { JwtService } from '@/services/jwt.service';
 import { LOGGED_OUT_RESPONSE_BODY } from './shared/constants';
-import { randomValidPassword } from './shared/random';
+import { randomString, randomValidPassword } from './shared/random';
 import * as testDb from './shared/testDb';
 import * as utils from './shared/utils/';
 
@@ -18,7 +19,10 @@ let owner: User;
 let authOwnerAgent: SuperAgentTest;
 const ownerPassword = randomValidPassword();
 
+config.set('userManagement.jwtSecret', randomString(5, 10));
+
 const testServer = utils.setupTestServer({ endpointGroups: ['auth'] });
+const jwtService = Container.get(JwtService);
 
 beforeAll(async () => {
 	globalOwnerRole = await testDb.getGlobalOwnerRole();
@@ -242,11 +246,11 @@ describe('GET /resolve-signup-token', () => {
 
 	test('should validate invite token', async () => {
 		const memberShell = await testDb.createUserShell(globalMemberRole);
+		const invitationToken = jwtService.signData({ inviterId: owner.id, inviteeId: memberShell.id });
 
 		const response = await authOwnerAgent
 			.get('/resolve-signup-token')
-			.query({ inviterId: owner.id })
-			.query({ inviteeId: memberShell.id });
+			.query({ token: invitationToken });
 
 		expect(response.statusCode).toBe(200);
 		expect(response.body).toEqual({
@@ -263,6 +267,7 @@ describe('GET /resolve-signup-token', () => {
 		jest.spyOn(Container.get(License), 'isWithinUsersLimit').mockReturnValueOnce(false);
 		const memberShell = await testDb.createUserShell(globalMemberRole);
 
+		// TODO: update this
 		const response = await authOwnerAgent
 			.get('/resolve-signup-token')
 			.query({ inviterId: owner.id })
@@ -278,17 +283,20 @@ describe('GET /resolve-signup-token', () => {
 
 		const second = await authOwnerAgent.get('/resolve-signup-token').query({ inviteeId });
 
+		// TODO: update this
 		const third = await authOwnerAgent.get('/resolve-signup-token').query({
 			inviterId: '5531199e-b7ae-425b-a326-a95ef8cca59d',
 			inviteeId: 'cb133beb-7729-4c34-8cd1-a06be8834d9d',
 		});
 
+		// TODO: update this
 		// user is already set up, so call should error
 		const fourth = await authOwnerAgent
 			.get('/resolve-signup-token')
 			.query({ inviterId: owner.id })
 			.query({ inviteeId });
 
+		// TODO: update this
 		// cause inconsistent DB state
 		await Db.collections.User.update(owner.id, { email: '' });
 		const fifth = await authOwnerAgent
