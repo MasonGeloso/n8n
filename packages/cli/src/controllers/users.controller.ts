@@ -6,11 +6,7 @@ import { User } from '@db/entities/User';
 import { SharedCredentials } from '@db/entities/SharedCredentials';
 import { SharedWorkflow } from '@db/entities/SharedWorkflow';
 import { Authorized, NoAuthRequired, Delete, Get, Post, RestController, Patch } from '@/decorators';
-import {
-	getInstanceBaseUrl,
-	hashPassword,
-	validatePassword,
-} from '@/UserManagement/UserManagementHelper';
+import { hashPassword, validatePassword } from '@/UserManagement/UserManagementHelper';
 import { issueCookie } from '@/auth/jwt';
 import {
 	BadRequestError,
@@ -116,7 +112,6 @@ export class UsersController {
 		});
 
 		const role = await this.roleService.findGlobalMemberRole();
-
 		if (!role) {
 			this.logger.error(
 				'Request to send email invite(s) to user(s) failed because no global member role was found in database',
@@ -167,8 +162,6 @@ export class UsersController {
 			userShells: createUsers,
 		});
 
-		const baseUrl = getInstanceBaseUrl();
-
 		const usersPendingSetup = Object.entries(createUsers).filter(([email, id]) => id && email);
 
 		// send invite email to new or not yet setup users
@@ -197,7 +190,6 @@ export class UsersController {
 					const result = await this.mailer.invite({
 						email,
 						inviteAcceptUrl,
-						domain: baseUrl,
 					});
 					if (result.emailSent) {
 						resp.user.emailSent = true;
@@ -224,7 +216,6 @@ export class UsersController {
 						});
 						this.logger.error('Failed to send email', {
 							userId: req.user.id,
-							domain: baseUrl,
 							email,
 						});
 						resp.error = error.message;
@@ -323,7 +314,7 @@ export class UsersController {
 		return findManyOptions;
 	}
 
-	removeSupplementaryFields(
+	private removeSupplementaryFields(
 		publicUsers: Array<Partial<PublicUser>>,
 		listQueryOptions: ListQuery.Options,
 	) {
@@ -596,14 +587,12 @@ export class UsersController {
 			throw new BadRequestError('User has already accepted the invite');
 		}
 
-		const baseUrl = getInstanceBaseUrl();
 		const inviteAcceptUrl = this.userService.generateInvitationUrl(req.user, reinvitee.id);
 
 		try {
 			const result = await this.mailer.invite({
 				email: reinvitee.email,
 				inviteAcceptUrl,
-				domain: baseUrl,
 			});
 			if (result.emailSent) {
 				void this.internalHooks.onUserReinvite({
@@ -627,7 +616,6 @@ export class UsersController {
 			this.logger.error('Failed to send email', {
 				email: reinvitee.email,
 				inviteAcceptUrl,
-				domain: baseUrl,
 			});
 			throw new InternalServerError(`Failed to send email to ${reinvitee.email}`);
 		}
