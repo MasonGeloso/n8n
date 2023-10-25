@@ -9,12 +9,15 @@ import type { PublicUser } from '@/Interfaces';
 import type { PostHogClient } from '@/posthog';
 import { JwtService } from '@/services/jwt.service';
 import { BadRequestError } from '@/ResponseHelper';
+import type { Role } from '@/databases/entities/Role';
+import { UserManagementMailer } from '@/UserManagement/email';
 
 @Service()
 export class UserService {
 	constructor(
 		private readonly jwtService: JwtService,
 		private readonly userRepository: UserRepository,
+		private readonly mailer: UserManagementMailer,
 	) {}
 
 	async findOne(options: FindOneOptions<User>) {
@@ -75,6 +78,20 @@ export class UserService {
 		);
 		url.searchParams.append('token', token);
 		return url.toString();
+	}
+
+	async inviteUser(inviter: User, email: string, globalRole: Role): Promise<boolean> {
+		let user = await this.userRepository.findOneBy({ email });
+		if (user?.password) return true;
+		if (!user) {
+			user = await this.userRepository.save(this.create({ email, globalRole }));
+		}
+		const inviteAcceptUrl = this.generateInvitationUrl(inviter, user.id);
+		const result = await this.mailer.invite({
+			email,
+			inviteAcceptUrl,
+		});
+		return result.emailSent;
 	}
 
 	async validateInvitationToken(token: string) {
